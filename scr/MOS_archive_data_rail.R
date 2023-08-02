@@ -1,4 +1,5 @@
-#Program for retrieving forecasts from MOS archive for vaylavirasto track temperature NN model.
+# R Program for retrieving forecasts from MOS archive for vaylavirasto track temperature NN model.
+# This program is adapted from Kaisa Ylinen's program to retrieve the data from MOS Archive"
 
 rm(list = ls())   # remove all previous lists 
 
