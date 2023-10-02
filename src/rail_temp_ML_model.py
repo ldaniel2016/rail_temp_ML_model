@@ -1,9 +1,13 @@
-# This program develops the ML model for predictiong the rail temperature
+### This program trains the ML model for predicting the rail_track temperature
+
+import matplotlib
+import matplotlib.pyplot as plt
 
 import pandas as pd
 import numpy as np 
-import matplotlib.pyplot as plt
+
 import time
+import datetime
 
 from sklearn import linear_model
 from sklearn.model_selection import train_test_split
@@ -26,99 +30,102 @@ from xgboost import XGBRegressor
 
 import time
 import sys
-import joblib
 import matplotlib.pyplot as plt
 import seaborn as sns
+import math
 import shap
+import joblib
 
 
 def main():
-	# Load the rail temperature data for the Väylävirasto stations along with 	 # the forecast data
+	df =  pd.read_csv(r'data/rail_temperatures_mos_data_sep2019_aug2023.csv', sep = ',')
 
-	df =  pd.read_csv(r'/home/daniel/projects/rails/data/rail_temperatures_mos_data.csv', sep = ',')
+	cols = ['lat', 'lon','analysis_time', 'analysis_date','forecast_time','forecast_period', 
+		'T2', 'D2', 'SKT','T_925','WS', 'LCC', 'MCC', 'coshour', 'cosmonth','sinmonth', 
+		'sinhour', 'hourly_SRR','hourly_STR', 'TRail']
+	df = df[cols]
+	df = df.dropna()
 
-	# changing the float64 data types to float32 data
-	cols = df.select_dtypes(include=[np.float64]).columns
-	df[cols] = df[cols].astype(np.float32)
+	df['month'] = pd.to_datetime(df['forecast_time']).dt.month
+	df['year'] = pd.to_datetime(df['forecast_time']).dt.year
+	df.TRail = df.TRail + 273.15
 
 
-	# changing the int64 data types to int32 data
-	cols = df.select_dtypes(include=[np.int64]).columns
-	df[cols] = df[cols].astype(np.int32)
+	# data not normalized
+    # sine, cosine hour and month variables 
+    # random splitted training and  test data 
+    # all temperature variables are in  Kelvin
+    # missing values are  removed 
 
-
-	# converting T2, D2 and SKT from degree K to degree celsius
-	df.T2= df['T2'] - 273.15
-	df.D2 = df['D2'] - 273.15
-	df.SKT = df['SKT'] - 273.15
-
-	# The predictors for the model
-	#xvar = ['lat', 'lon','forecast_period', 'T2', 'D2', 'SKT','U10', 'V10', 'sinhour', 'hourly_SRR','hourly_STR', 'hourly_SLHF', 'hourly_SSHF']
-
-	xvar = ['lat', 'lon','forecast_period', 'T2', 'D2', 'SKT', 
-        'sinhour', 'hourly_SRR','hourly_STR']
-
-	X = df.loc[:, xvar]
-	y = df.loc[:,'TRail']
-
-	# Splitting the data to training and test samples
-	from sklearn.model_selection import train_test_split
-	X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2)
-
-	# This dataframe we use to plot the graph of RMSE vs forecast_period
+	# this df_test dataframe is created for plotting 
 	df_test = pd.concat([X_test, y_test], axis = 1)
 
+	regressor = xgb.XGBRegressor(n_estimators=200, max_depth=15, eta=0.182, subsample=0.751, colsample_bytree=0.997, reg_alpha=0.54)
+	
+	regressor.fit(X_train, y_train)
 
-	# Training the XGB model
-	model  = xgb.XGBRegressor(n_estimators=100, max_depth=11, eta=0.3, subsample=0.7, colsample_bytree=0.8)
-
-	# Predicting using the xgb_model
-	model.fit(X_train, y_train)
-
-	y_trP = model.predict(X_train)
-	y_tsP = model.predict(X_test)
+	y_trP = regressor.predict(X_train)
+	y_tsP = regressor.predict(X_test)
 
 	print('XGB train error:', mean_squared_error(y_train,y_trP,squared=False))
 	print('XGB test error:', mean_squared_error(y_test,y_tsP,squared=False))
 
 
-	# To plot the RMSE vs lead time
-	ajat = sorted(df_test['forecast_period'].unique().tolist())
-	xgb_error = [None] * len(ajat)
+	# save the model
+	param = 'TRail'
+	joblib.dump(regressor, '../results/xgb_random_model' + param + '.joblib')
 
-	for i in range(0, len(ajat)):
+	# to plot the RMSE vs lead time for not normalized data
+
+	ajat = sorted(df_test['forecast_period'].unique().tolist())
+
+
+	xgb_error = [None] * len(ajat)
+	for i in range(0,len(ajat)):
 		tmp = df_test[df_test['forecast_period'] == ajat[i]]
 		df_x_test_ajat = tmp.drop('TRail', axis =1)
-
 		x_test_ajat = df_x_test_ajat
 		y_test_ajat = tmp['TRail']
-		y_xgb_ajat  = model.predict(x_test_ajat)
-		xgb_error[i] = mean_squared_error(y_test_ajat, y_xgb_ajat, squared=False)
+		y_xgb_ajat = regressor.predict(x_test_ajat)
+		xgb_error[i] = mean_squared_error(y_test_ajat,y_xgb_ajat,squared=False)
 
+	plt.close()
 	plt.plot(ajat, xgb_error, 'b', label="XGB")
 	plt.title("XGB RMSE")
 	plt.xlabel("forecast_period")
 	plt.ylabel("RMSE")
 	plt.legend(loc="lower right")
 
-	param = 'TRail'
-	plt.savefig('XGB_forecast_period_' + param + '_rmse.png')
-	plt.close()
+    param = 'TRail'	
+	plt.savefig('XGB_forecast_period_' + param + '.png')
 
-	# plot shap values
-	X_sub = X_test.sample(frac=0.0005)
-	shap_values = shap.Explainer(model).shap_values(X_sub)
+	#Shap values for nnot ormalized data
+	import shap
+	# take random set from test data
+	X_sub = X_test.sample(frac=0.1)
+	print(X_sub.size)
+	shap_values = shap.Explainer(regressor).shap_values(X_sub)
+	plt.close()
 	shap.summary_plot(shap_values, X_sub, plot_type="bar", show = False)
-	plt.savefig('shap_bar_' + 'rail_temp' + '.png')
-	plt.close()
-	# another plot
-	shap.summary_plot(shap_values, X_sub, show = False)
-	plt.savefig('shap_sum_' + 'rail_temp'+ '.png')
 
-	# save the model using joblib
-	joblib.dump(model, "xgb_modelv1.joblib")
-	print('The xgbmodel is saved as xgb_modelv1.joblib')
+	plt.savefig('shap_bar_' + param '.png')
+
 
 if __name__ == "__main__":
 	main()
+
+
+# Results
+# XGB train error: 1.6340721353575478
+# XGB test error: 1.6393303799561285
+# XGB test error on so far unforeseen data, i.e, Oct 2022 and Jan,Apr, Jul 2023
+# XGB testing error: 4.1234929752605565
+# Jan 2023
+# XGB testing error: 1.1988764521942834
+# April 2023
+# XGB testing error: 6.566499205956574
+# July 2023
+# XGB testing error: 3.5533725085060115
+# October 2022
+# XGB testing error: 1.6019979771691122
 
